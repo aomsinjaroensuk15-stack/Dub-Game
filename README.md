@@ -12,6 +12,8 @@ Inspired by the classic "voice over the song" clips 🐄
 4. Get scored on **Rhythm** (energy envelope), **Pitch** (autocorrelation contour) and **Timing**
 5. Get roasted. Retry. Beat your best score 🏆
 
+Extras: **▶ Preview** listens to the clip first, your take is shown as a cyan waveform overlaid 50/50 on the magenta clip, and you can **⬇️ download your take** right from the judging screen.
+
 ## 🚀 Host it free on GitHub Pages
 
 1. Create a new repository on [github.com](https://github.com) (Public)
@@ -51,6 +53,3 @@ Pure DSP, no libraries:
 
 - The clip plays through your speaker while you record, so the mic hears it too — this makes scores forgiving. It's a party game, not a conservatory exam 😄
 - Best scores are stored per-clip in `localStorage` (stays on your phone)
-
-## 🏃 Running & Test
-### [Play The App Here]()

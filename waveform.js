@@ -1,5 +1,5 @@
 "use strict";
-/* Waveform drawing — magenta bars + playhead, TikTok-dub style */
+/* Waveform drawing — magenta clip bars + cyan take bars, TikTok-dub style */
 const Waveform = (() => {
 
   function peaksFromBuffer(buffer, columns) {
@@ -19,8 +19,7 @@ const Waveform = (() => {
     return peaks.map(p => Math.pow(p / m, 0.7));
   }
 
-  function draw(canvas, peaks, progress) {
-    progress = progress || 0;
+  function setup(canvas) {
     const ctx = canvas.getContext("2d");
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth || 300;
@@ -33,23 +32,58 @@ const Waveform = (() => {
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = "#12101a";
     ctx.fillRect(0, 0, w, h);
+    return { ctx: ctx, w: w, h: h };
+  }
+
+  function bars(ctx, w, h, peaks, color, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
     const mid = h / 2;
     const barW = w / peaks.length;
-    const played = Math.floor(progress * peaks.length);
     for (let i = 0; i < peaks.length; i++) {
       const ph = Math.max(2, peaks[i] * (h - 12));
-      ctx.fillStyle = i < played ? "#ff2bd6" : "#3a2440";
       ctx.fillRect(i * barW + barW * 0.15, mid - ph / 2, Math.max(1, barW * 0.7), ph);
     }
+    ctx.restore();
+  }
+
+  function centerLine(ctx, w, h) {
     ctx.strokeStyle = "rgba(255,255,255,0.15)";
     ctx.beginPath();
-    ctx.moveTo(0, mid); ctx.lineTo(w, mid);
+    ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2);
     ctx.stroke();
+  }
+
+  // single waveform with playhead progress (0..1)
+  function draw(canvas, peaks, progress) {
+    progress = progress || 0;
+    const s = setup(canvas);
+    bars(s.ctx, s.w, s.h, peaks, "#3a2440", 1);
+    // played portion
+    const played = Math.floor(progress * peaks.length);
+    if (played > 0) {
+      s.ctx.save();
+      s.ctx.beginPath();
+      s.ctx.rect(0, 0, s.w * Math.min(1, progress), s.h);
+      s.ctx.clip();
+      bars(s.ctx, s.w, s.h, peaks, "#ff2bd6", 1);
+      s.ctx.restore();
+    }
+    centerLine(s.ctx, s.w, s.h);
     if (progress > 0 && progress < 1) {
-      ctx.fillStyle = "#ff2bd6";
-      ctx.fillRect(progress * w - 1, 2, 2, h - 4);
+      s.ctx.fillStyle = "#ff2bd6";
+      s.ctx.fillRect(progress * s.w - 1, 2, 2, s.h - 4);
     }
   }
 
-  return { peaksFromBuffer: peaksFromBuffer, draw: draw };
+  // clip (magenta) + your take (cyan), each at 50% opacity
+  function drawDual(canvas, clipPeaks, takePeaks) {
+    const s = setup(canvas);
+    bars(s.ctx, s.w, s.h, clipPeaks, "#ff2bd6", 0.5);
+    bars(s.ctx, s.w, s.h, takePeaks, "#2be4ff", 0.5);
+    centerLine(s.ctx, s.w, s.h);
+  }
+
+  return { peaksFromBuffer: peaksFromBuffer, draw: draw, drawDual: drawDual };
 })();

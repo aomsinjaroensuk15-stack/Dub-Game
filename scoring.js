@@ -1,8 +1,8 @@
 "use strict";
 /* ============================================================
    Dub Roast — scoring engine (pure DSP, no DOM, testable)
-   Compares the original clip with the user's voice take and
-   returns a 0-100 score plus sub-scores.
+   v2: decimated to ~8 kHz + capped pitch frames -> fast on
+   long songs. Same API: score(origAudioBuffer, takeAudioBuffer)
    ============================================================ */
 const Scoring = (() => {
 
@@ -16,6 +16,19 @@ const Scoring = (() => {
     }
     if (ch > 1) for (let i = 0; i < n; i++) out[i] /= ch;
     return { data: out, sr: buf.sampleRate };
+  }
+
+  // one-pole low-pass, then cheap decimation — plenty for envelopes/pitch
+  function decimate(data, factor) {
+    if (factor <= 1) return data;
+    const alpha = 0.5; // ~4 kHz corner at 16 kHz
+    const lp = new Float32Array(data.length);
+    let y = 0;
+    for (let i = 0; i < data.length; i++) { y += alpha * (data[i] - y); lp[i] = y; }
+    const n = Math.floor(data.length / factor);
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) out[i] = lp[i * factor];
+    return out;
   }
 
   // RMS envelope at fixed fps, log-compressed
@@ -123,10 +136,16 @@ const Scoring = (() => {
     return sr / bestLag;
   }
 
+  const MAX_PITCH_FRAMES = 600; // cap so long songs stay fast
+
   function pitchContour(data, sr, fps) {
     fps = fps || 50;
-    const frameLen = Math.max(64, Math.round(sr / 20)); // 50 ms window
-    const hop = Math.max(1, Math.round(sr / fps));
+    const frameLen = Math.max(128, Math.round(sr / 20)); // 50 ms window
+    let hop = Math.max(1, Math.round(sr / fps));
+    const approx = Math.floor((data.length - frameLen) / hop);
+    if (approx > MAX_PITCH_FRAMES) {
+      hop = Math.max(hop, Math.floor((data.length - frameLen) / MAX_PITCH_FRAMES));
+    }
     const n = Math.max(1, Math.floor((data.length - frameLen) / hop));
     const out = new Array(n).fill(0);
     const frame = new Float32Array(frameLen);
@@ -180,32 +199,37 @@ const Scoring = (() => {
   function score(originalBuffer, takeBuffer) {
     const orig = toMono(originalBuffer);
     const take = toMono(takeBuffer);
-
     const tData = trimSilence(take.data, take.sr, 0.012);
 
-    // --- rhythm / energy (100 fps envelopes) ---
-    const envO = envelope(orig.data, orig.sr);
-    const envT = envelope(tData, take.sr);
-    const lag = findLag(envO, envT, 150); // ±1.5 s mic-start tolerance
-    const eo = shiftAlign(envO, envT, lag)[0];
-    const et = shiftAlign(envO, envT, lag)[1];
-    const envR = Math.max(0, pearson(znorm(resample(eo, 400)), znorm(resample(et, 400))));
+    // work at ~8 kHz — 4x less data for everything below
+    const decO = Math.max(1, Math.ceil(orig.sr / 8000));
+    const decT = Math.max(1, Math.ceil(take.sr / 8000));
+    const oData = decimate(orig.data, decO);
+    const oSr = Math.round(orig.sr / decO);
+    const tDatad = decimate(tData, decT);
+    const tSr = Math.round(take.sr / decT);
 
-    // --- pitch (50 fps contours) ---
-    const pcO = pitchContour(orig.data, orig.sr);
-    const pcT = pitchContour(tData, take.sr);
+    // --- rhythm / energy (100 fps envelopes) ---
+    const envO = envelope(oData, oSr);
+    const envT = envelope(tDatad, tSr);
+    const lag = findLag(envO, envT, 150); // ±1.5 s mic-start tolerance
+    const pair = shiftAlign(envO, envT, lag);
+    const envR = Math.max(0, pearson(znorm(resample(pair[0], 400)), znorm(resample(pair[1], 400))));
+
+    // --- pitch (50 fps contours, capped) ---
+    const pcO = pitchContour(oData, oSr);
+    const pcT = pitchContour(tDatad, tSr);
     let pitchR;
     if (Math.min(voicedRatio(pcO), voicedRatio(pcT)) < 0.15) {
       pitchR = 0.5; // mostly speech/noise -> neutral
     } else {
       const liO = interpolateUnvoiced(pcO).map(p => p > 0 ? Math.log2(p) : 0);
       const liT = interpolateUnvoiced(pcT).map(p => p > 0 ? Math.log2(p) : 0);
-      const po = shiftAlign(liO, liT, Math.round(lag / 2))[0];
-      const pt = shiftAlign(liO, liT, Math.round(lag / 2))[1];
-      pitchR = Math.max(0, pearson(znorm(resample(po, 200)), znorm(resample(pt, 200))));
+      const pp = shiftAlign(liO, liT, Math.round(lag / 2));
+      pitchR = Math.max(0, pearson(znorm(resample(pp[0], 200)), znorm(resample(pp[1], 200))));
     }
 
-    // --- timing ---
+    // --- timing (true durations) ---
     const durO = orig.data.length / orig.sr;
     const durT = tData.length / take.sr;
     const durRatio = Math.min(durO, durT) / Math.max(durO, durT);

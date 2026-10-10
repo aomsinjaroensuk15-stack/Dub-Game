@@ -201,3 +201,39 @@ header h1 {
   animation: fadein 0.2s ease;
   max-width: 90vw; text-align: center;
 }
+
+
+/* ---------- v2 additions ---------- */
+.judging {
+  font-weight: 700; font-size: 1.05rem;
+  margin: 16px 0; color: var(--muted);
+}
+.dots::after {
+  content: "";
+  animation: dotty 1.2s steps(1) infinite;
+}
+@keyframes dotty {
+  0%   { content: ""; }
+  25%  { content: "."; }
+  50%  { content: ".."; }
+  75%  { content: "..."; }
+}
+
+.wave-results {
+  border-color: rgba(43, 228, 255, 0.35);
+  box-shadow: 0 0 24px rgba(43, 228, 255, 0.10);
+  margin-top: 16px;
+}
+.legend {
+  display: flex; gap: 18px; justify-content: center;
+  margin-top: 8px; font-size: 0.78rem; color: var(--muted);
+}
+.lg-clip::before { content: "■ "; color: var(--magenta); }
+.lg-you::before  { content: "■ "; color: #2be4ff; }
+
+.btn-dl {
+  text-decoration: none;
+  display: inline-flex; align-items: center;
+  background: linear-gradient(135deg, #14506b, #1f1930);
+  border: 1px solid rgba(43, 228, 255, 0.35);
+}

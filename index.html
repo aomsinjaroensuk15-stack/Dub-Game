@@ -35,6 +35,7 @@
     </div>
     <canvas id="wave-canvas" class="wave"></canvas>
     <div id="controls-ready" class="controls">
+      <button id="btn-preview" class="btn">▶ Preview</button>
       <button id="btn-start" class="btn btn-big">🎤 Start Dubbing</button>
     </div>
     <div id="controls-record" class="controls controls-record hidden">
@@ -49,16 +50,29 @@
     <div id="flames" class="flames"></div>
     <div class="results-card">
       <div class="results-label">Results</div>
-      <div id="score-percent" class="score-percent">0%</div>
-      <div id="new-best" class="new-best hidden">✨ new best! ✨</div>
-      <div id="score-msg" class="score-msg"></div>
-      <div class="score-detail">
-        <div class="sd-row"><span>Rhythm</span><div class="bar"><div id="bar-env"></div></div></div>
-        <div class="sd-row"><span>Pitch</span><div class="bar"><div id="bar-pitch"></div></div></div>
-        <div class="sd-row"><span>Timing</span><div class="bar"><div id="bar-dur"></div></div></div>
+
+      <div id="judging" class="judging">Judging your performance<span class="dots"></span> 😈</div>
+
+      <div id="score-block" class="hidden">
+        <div id="score-percent" class="score-percent">0%</div>
+        <div id="new-best" class="new-best hidden">✨ new best! ✨</div>
+        <div id="score-msg" class="score-msg"></div>
+        <div class="score-detail">
+          <div class="sd-row"><span>Rhythm</span><div class="bar"><div id="bar-env"></div></div></div>
+          <div class="sd-row"><span>Pitch</span><div class="bar"><div id="bar-pitch"></div></div></div>
+          <div class="sd-row"><span>Timing</span><div class="bar"><div id="bar-dur"></div></div></div>
+        </div>
       </div>
+
+      <canvas id="results-wave" class="wave wave-results hidden"></canvas>
+      <div id="legend" class="legend hidden">
+        <span class="lg lg-clip">clip</span>
+        <span class="lg lg-you">you</span>
+      </div>
+
       <audio id="take-audio" controls class="take-audio"></audio>
       <div class="controls">
+        <a id="btn-download" class="btn btn-dl" href="#" download>⬇️ Download take</a>
         <button id="btn-retry" class="btn">🔁 Retry</button>
         <button id="btn-new" class="btn">🎧 New Clip</button>
       </div>

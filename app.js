@@ -1,7 +1,8 @@
 "use strict";
 /* ============================================================
-   Dub Roast — app orchestration
-   import -> waveform -> countdown -> play+record -> score
+   Dub Roast — app orchestration  v2
+   import -> preview -> countdown -> play+record -> judging
+   (download button available while judging) -> results
    ============================================================ */
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -10,6 +11,7 @@
   let clipBuffer = null;
   let clipName = "";
   let clipPeaks = [];
+  let takePeaks = null;
   let micStream = null;
   let mediaRecorder = null;
   let recChunks = [];
@@ -20,6 +22,10 @@
   let stopping = false;
   let rafId = 0;
   let takeBlobUrl = null;
+  // preview state
+  let previewNode = null;
+  let previewOn = false;
+  let previewStart = 0;
 
   /* ---------- screens & toast ---------- */
 
@@ -71,6 +77,7 @@
     }
     clipBuffer = decoded;
     clipName = file.name;
+    takePeaks = null;
     clipPeaks = Waveform.peaksFromBuffer(clipBuffer, 240);
     $("clip-name").textContent = clipName;
     $("clip-duration").textContent = clipBuffer.duration.toFixed(1) + "s";
@@ -81,6 +88,7 @@
 
   function resetStage() {
     cancelAnimationFrame(rafId);
+    if (previewOn) stopPreview();
     playing = false;
     stopping = false;
     Waveform.draw($("wave-canvas"), clipPeaks, 0);
@@ -101,6 +109,39 @@
   }
 
   function bestKey() { return "dubroast_best_" + clipName; }
+
+  /* ---------- preview (listen to the clip, no recording) ---------- */
+
+  function togglePreview() {
+    if (previewOn) { stopPreview(); return; }
+    ensureCtx().then(() => {
+      unlockAudio();
+      previewNode = audioCtx.createBufferSource();
+      previewNode.buffer = clipBuffer;
+      previewNode.connect(audioCtx.destination);
+      previewOn = true;
+      previewStart = audioCtx.currentTime;
+      previewNode.onended = () => { if (previewOn) stopPreview(); };
+      previewNode.start();
+      $("btn-preview").textContent = "⏹ Stop Song";
+      previewLoop();
+    });
+  }
+
+  function previewLoop() {
+    if (!previewOn) return;
+    const p = (audioCtx.currentTime - previewStart) / clipBuffer.duration;
+    Waveform.draw($("wave-canvas"), clipPeaks, Math.max(0, Math.min(1, p)));
+    if (p < 1) rafId = requestAnimationFrame(previewLoop);
+  }
+
+  function stopPreview() {
+    previewOn = false;
+    cancelAnimationFrame(rafId);
+    try { previewNode.stop(); } catch (e) {}
+    $("btn-preview").textContent = "▶ Preview";
+    Waveform.draw($("wave-canvas"), clipPeaks, 0);
+  }
 
   /* ---------- countdown ---------- */
 
@@ -130,6 +171,7 @@
 
   async function startDub() {
     if (!clipBuffer) return;
+    if (previewOn) stopPreview();
     const ctx = await ensureCtx();
     unlockAudio();
 
@@ -218,7 +260,7 @@
     if (takeBlobUrl) URL.revokeObjectURL(takeBlobUrl);
     takeBlobUrl = URL.createObjectURL(blob);
 
-    toast("Judging your performance... 😈");
+    // decode take (fast) so the dual waveform can show during judging
     let takeBuffer;
     try {
       const ab = await blob.arrayBuffer();
@@ -229,9 +271,14 @@
       resetStage();
       return;
     }
+    takePeaks = Waveform.peaksFromBuffer(takeBuffer, 240);
 
-    const result = Scoring.score(clipBuffer, takeBuffer);
-    showResults(result);
+    showJudging(blob);
+    // let the UI paint, then score (~250 ms even for long songs)
+    setTimeout(() => {
+      const result = Scoring.score(clipBuffer, takeBuffer);
+      showScores(result);
+    }, 80);
   }
 
   /* ---------- results ---------- */
@@ -244,7 +291,27 @@
     return ["🏆 GOLDEN VOICE — VERITY CERTIFIED", true];
   }
 
-  function showResults(result) {
+  // judging mode: spinner + audio + DOWNLOAD BUTTON, scores hidden
+  function showJudging(blob) {
+    $("score-block").classList.add("hidden");
+    $("judging").classList.remove("hidden");
+    $("results-wave").classList.remove("hidden");
+    $("legend").classList.remove("hidden");
+    Waveform.drawDual($("results-wave"), clipPeaks, takePeaks);
+
+    const audio = $("take-audio");
+    audio.src = takeBlobUrl;
+
+    const ext = recMime.indexOf("mp4") >= 0 ? ".m4a" : ".webm";
+    const dl = $("btn-download");
+    dl.href = takeBlobUrl;
+    dl.download = "dub-take-" + clipName.replace(/\.[^.]+$/, "") + ext;
+
+    updateBestBadge();
+    showScreen("results");
+  }
+
+  function showScores(result) {
     const p = result.percent;
     const prevBest = Number(localStorage.getItem(bestKey()) || 0);
     const isNewBest = p > prevBest;
@@ -270,11 +337,9 @@
     $("bar-dur").style.width = Math.round(result.dur * 100) + "%";
     $("new-best").classList.toggle("hidden", !isNewBest);
 
-    const audio = $("take-audio");
-    audio.src = takeBlobUrl;
-
+    $("judging").classList.add("hidden");
+    $("score-block").classList.remove("hidden");
     updateBestBadge();
-    showScreen("results");
   }
 
   /* ---------- wiring ---------- */
@@ -284,6 +349,7 @@
     input.addEventListener("change", (e) => handleFile(e.target.files[0]));
     $("dropzone").addEventListener("click", () => input.click());
 
+    $("btn-preview").addEventListener("click", togglePreview);
     $("btn-start").addEventListener("click", startDub);
     $("btn-stop").addEventListener("click", () => {
       if (sourceNode) { try { sourceNode.stop(); } catch (e) {} }
@@ -295,6 +361,9 @@
     window.addEventListener("resize", () => {
       if (clipBuffer && !$("screen-main").classList.contains("hidden")) {
         Waveform.draw($("wave-canvas"), clipPeaks, 0);
+      }
+      if (takePeaks && !$("screen-results").classList.contains("hidden")) {
+        Waveform.drawDual($("results-wave"), clipPeaks, takePeaks);
       }
     });
   });
