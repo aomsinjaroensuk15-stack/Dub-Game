@@ -53,3 +53,6 @@ Pure DSP, no libraries:
 
 - The clip plays through your speaker while you record, so the mic hears it too — this makes scores forgiving. It's a party game, not a conservatory exam 😄
 - Best scores are stored per-clip in `localStorage` (stays on your phone)
+
+## ⏸️ play it
+### [open](https://github.com/aomsinjaroensuk15-stack/Dub-Game/)
