@@ -199,14 +199,15 @@
     }
     mediaRecorder = new MediaRecorder(stream, recMime ? { mimeType: recMime } : undefined);
     mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
-    mediaRecorder.start(250);
 
     $("controls-ready").classList.add("hidden");
     $("controls-record").classList.remove("hidden");
     $("hint").classList.add("hidden");
 
     await countdown();
-    playClip();
+    // start mic right before playback -> no dead air, tiny lag, easy alignment
+    mediaRecorder.start(250);
+    setTimeout(playClip, 150);
   }
 
   function playClip() {
