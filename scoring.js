@@ -72,7 +72,7 @@ const Scoring = (() => {
       num += x * y; da += x * x; db += y * y;
     }
     const den = Math.sqrt(da * db);
-    return den === 0 ? 0 : num / den;
+    return den < 1e-9 ? 0 : num / den; // constant signals correlate with nothing
   }
 
   function resample(a, len) {
@@ -103,7 +103,7 @@ const Scoring = (() => {
       }
       if (n < 10) continue;
       const den = Math.sqrt(da * db);
-      const r = den === 0 ? 0 : num / den;
+      const r = den < 1e-9 ? 0 : num / den;
       if (r > bestVal) { bestVal = r; best = lag; }
     }
     return best;
@@ -132,7 +132,8 @@ const Scoring = (() => {
       const r = s / r0;
       if (r > bestR) { bestR = r; bestLag = lag; }
     }
-    if (bestR < 0.4) return 0;
+    // boundary peaks are unreliable (usually low-freq noise, not pitch)
+    if (bestR < 0.5 || bestLag <= minLag + 1 || bestLag >= maxLag - 1) return 0;
     return sr / bestLag;
   }
 
@@ -175,6 +176,29 @@ const Scoring = (() => {
     return out;
   }
 
+  // 12-bin pitch-class histogram — immune to octave errors, needs no alignment
+  function chromaHist(contour) {
+    const h = new Array(12).fill(0);
+    let n = 0;
+    for (const p of contour) {
+      if (p > 0) {
+        const bin = ((Math.round(12 * Math.log2(p)) % 12) + 12) % 12;
+        h[bin]++; n++;
+      }
+    }
+    if (!n) return null;
+    return h.map(v => v / n);
+  }
+
+  function median3(c) {
+    const out = c.slice();
+    for (let i = 1; i < c.length - 1; i++) {
+      const a = c[i - 1], b = c[i], d = c[i + 1];
+      out[i] = a < b ? (b < d ? b : Math.max(a, d)) : (a < d ? a : Math.max(b, d));
+    }
+    return out;
+  }
+
   function voicedRatio(c) {
     let v = 0;
     for (const x of c) if (x > 0) v++;
@@ -195,11 +219,20 @@ const Scoring = (() => {
     return data.slice(a, b);
   }
 
+  // sample the first ~0.3s of the take as its noise floor (mic pre-roll)
+  function noiseFloorRMS(data, sr) {
+    const n = Math.min(data.length, Math.floor(sr * 0.3));
+    let s = 0;
+    for (let i = 0; i < n; i++) s += data[i] * data[i];
+    return Math.sqrt(s / n);
+  }
+
   /* main entry: originalBuffer & takeBuffer are Web Audio AudioBuffers */
   function score(originalBuffer, takeBuffer) {
     const orig = toMono(originalBuffer);
     const take = toMono(takeBuffer);
-    const tData = trimSilence(take.data, take.sr, 0.012);
+    const floorT = noiseFloorRMS(take.data, take.sr);
+    const tData = trimSilence(take.data, take.sr, Math.max(0.008, floorT * 2.5));
 
     // work at ~8 kHz — 4x less data for everything below
     const decO = Math.max(1, Math.ceil(orig.sr / 8000));
@@ -212,7 +245,7 @@ const Scoring = (() => {
     // --- rhythm / energy (100 fps envelopes) ---
     const envO = envelope(oData, oSr);
     const envT = envelope(tDatad, tSr);
-    const lag = findLag(envO, envT, 150); // ±1.5 s mic-start tolerance
+    const lag = findLag(envO, envT, 250); // ±2.5 s tolerance (recorder starts just before playback)
     const pair = shiftAlign(envO, envT, lag);
     const envR = Math.max(0, pearson(znorm(resample(pair[0], 400)), znorm(resample(pair[1], 400))));
 
@@ -223,10 +256,21 @@ const Scoring = (() => {
     if (Math.min(voicedRatio(pcO), voicedRatio(pcT)) < 0.15) {
       pitchR = 0.5; // mostly speech/noise -> neutral
     } else {
-      const liO = interpolateUnvoiced(pcO).map(p => p > 0 ? Math.log2(p) : 0);
-      const liT = interpolateUnvoiced(pcT).map(p => p > 0 ? Math.log2(p) : 0);
+      const liO = median3(interpolateUnvoiced(pcO)).map(p => p > 0 ? Math.log2(p) : 0);
+      const liT = median3(interpolateUnvoiced(pcT)).map(p => p > 0 ? Math.log2(p) : 0);
       const pp = shiftAlign(liO, liT, Math.round(lag / 2));
-      pitchR = Math.max(0, pearson(znorm(resample(pp[0], 200)), znorm(resample(pp[1], 200))));
+      const po = znorm(resample(pp[0], 200));
+      const pt = znorm(resample(pp[1], 200));
+      // octave forgiveness: phone-mic pitch detection often jumps an octave;
+      // one octave = x2 frequency = +1.0 in log2 space.
+      // credit the best of {as-is, one octave down, one octave up}
+      const c0 = pearson(po, pt);
+      const cDn = pearson(po, pt.map(v => v - 1));
+      const cUp = pearson(po, pt.map(v => v + 1));
+      // chroma fallback: saves takes where the detector flips octaves per-frame
+      const hO = chromaHist(pcO), hT = chromaHist(pcT);
+      const cHist = (hO && hT) ? Math.max(0, pearson(znorm(hO), znorm(hT))) : 0;
+      pitchR = Math.max(0, c0, cDn, cUp, cHist);
     }
 
     // --- timing (true durations) ---
@@ -239,7 +283,12 @@ const Scoring = (() => {
     return { percent: percent, env: envR, pitch: pitchR, dur: durRatio };
   }
 
-  return { score: score };
+  return { score: score, _internals: {
+    envelope: envelope, pitchContour: pitchContour, znorm: znorm,
+    pearson: pearson, resample: resample, findLag: findLag,
+    shiftAlign: shiftAlign, interpolateUnvoiced: interpolateUnvoiced,
+    median3: median3, trimSilence: trimSilence, decimate: decimate, chromaHist: chromaHist
+  } };
 })();
 
 if (typeof module !== "undefined") module.exports = Scoring;
